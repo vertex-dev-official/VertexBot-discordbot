@@ -1,0 +1,397 @@
+// ================================================================
+// Schema Prisma - Base de donnees partagee entre le BOT et le WEB
+// PostgreSQL (Supabase / Neon / Railway...)
+// ================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ----------------------------------------------------------------
+// CONFIGURATION GENERALE DU SERVEUR
+// ----------------------------------------------------------------
+model Guild {
+  id        String   @id // Discord guild ID
+  name      String?
+  icon      String?
+  embedColor String  @default("#9B6FBF")
+  prefix    String   @default("!") // uniquement affichage, le bot est full slash
+
+  // Modules on/off (tout configurable depuis le panel web)
+  economyEnabled    Boolean @default(true)
+  levelingEnabled   Boolean @default(true)
+  moderationEnabled Boolean @default(true)
+  ticketsEnabled    Boolean @default(true)
+  musicEnabled      Boolean @default(true)
+  gamesEnabled      Boolean @default(true)
+  captchaEnabled    Boolean @default(false)
+  confessionsEnabled Boolean @default(false)
+
+  // Salons speciaux
+  welcomeChannelId   String?
+  welcomeMessage     String? @default("Bienvenue {user} sur **{guild}** ! Nous sommes maintenant {memberCount} membres.")
+  leaveChannelId     String?
+  leaveMessage       String? @default("{user} a quitte le serveur.")
+  logsChannelId      String?
+  automodLogsChannelId String?
+  confessionChannelId String?
+
+  // Automod
+  automodConfig Json? // { badWords: [], antiSpam: true, antiLink: false, antiInvite: true, maxWarnBeforeMute: 3 }
+
+  // IA multi-modeles (voir bot/src/lib/ai.js) - repond via /ask et, si configure, en direct dans un salon dedie.
+  // Chaque serveur peut fournir sa PROPRE cle API (saisie privee via /ia-cle ou le panel web) : le bot
+  // n'a besoin d'aucune cle globale pour etre invite et utilise par n'importe quel serveur Discord.
+  aiEnabled   Boolean @default(false)
+  aiChannelId String?
+  aiProvider  String? // "anthropic" | "openai" | "groq"
+  aiApiKey    String? // cle propre a ce serveur, jamais renvoyee en clair au panel web (voir /api/guilds/[id]/ai-key)
+
+  // Profil du bot sur ce serveur (pseudo Discord reel + bio/bannière "vitrine" affichees par le bot lui-meme,
+  // Discord n'exposant pas de bio/bannière par-serveur nativement pour un compte bot)
+  botNickname String?
+  botBio      String?
+  botAvatarUrl String?
+  botBannerUrl String?
+
+  // Salon "guide de demarrage" cree automatiquement a l'arrivee du bot (voir events/guildCreate.js)
+  startupGuideChannelId String?
+
+  // Leveling
+  levelUpChannelId String? // null = envoi dans le salon du message
+  levelUpMessage   String? @default("GG {user}, tu passes niveau **{level}** !")
+  xpPerMessage     Int     @default(15)
+  xpCooldown       Int     @default(60) // secondes
+
+  // Economie
+  currencyName   String @default("PiecesCoins")
+  currencySymbol String @default("🪙")
+  dailyAmount    Int    @default(100)
+  workMin        Int    @default(50)
+  workMax        Int    @default(200)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members         Member[]
+  warnings        Warning[]
+  shopItems       ShopItem[]
+  ticketCategories TicketCategory[]
+  ticketPanels    TicketPanel[]
+  tickets         Ticket[]
+  reactionRoles   ReactionRole[]
+  giveaways       Giveaway[]
+  customEmbeds    CustomEmbed[]
+  levelRewards    LevelReward[]
+  polls           Poll[]
+  applicationForms ApplicationForm[]
+}
+
+// ----------------------------------------------------------------
+// MEMBRES (economie + xp, communs)
+// ----------------------------------------------------------------
+model Member {
+  id       String @id @default(cuid())
+  userId   String
+  guildId  String
+  guild    Guild  @relation(fields: [guildId], references: [id], onDelete: Cascade)
+
+  // Economie
+  balance    Int @default(0)
+  bank       Int @default(0)
+  lastDaily  DateTime?
+  lastWork   DateTime?
+
+  // Leveling
+  xp    Int @default(0)
+  level Int @default(0)
+  lastXpAt DateTime?
+
+  inventory InventoryItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, guildId])
+  @@index([guildId])
+}
+
+model ShopItem {
+  id          String  @id @default(cuid())
+  guildId     String
+  guild       Guild   @relation(fields: [guildId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  price       Int
+  roleId      String? // role donne a l'achat, optionnel
+  emoji       String? @default("🎁")
+  stock       Int?    // null = illimite
+
+  inventoryEntries InventoryItem[]
+
+  createdAt DateTime @default(now())
+}
+
+model InventoryItem {
+  id       String   @id @default(cuid())
+  memberId String
+  member   Member   @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  itemId   String
+  item     ShopItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  quantity Int      @default(1)
+  boughtAt DateTime @default(now())
+}
+
+model LevelReward {
+  id      String @id @default(cuid())
+  guildId String
+  guild   Guild  @relation(fields: [guildId], references: [id], onDelete: Cascade)
+  level   Int
+  roleId  String
+
+  @@unique([guildId, level])
+}
+
+// ----------------------------------------------------------------
+// MODERATION
+// ----------------------------------------------------------------
+model Warning {
+  id        String   @id @default(cuid())
+  guildId   String
+  guild     Guild    @relation(fields: [guildId], references: [id], onDelete: Cascade)
+  userId    String
+  moderatorId String
+  reason    String
+  createdAt DateTime @default(now())
+
+  @@index([guildId, userId])
+}
+
+// ----------------------------------------------------------------
+// TICKETS (categories, types, panels, embeds configurables)
+// ----------------------------------------------------------------
+model TicketCategory {
+  id            String   @id @default(cuid())
+  guildId       String
+  guild         Guild    @relation(fields: [guildId], references: [id], onDelete: Cascade)
+  name          String   // ex: "Support", "Partenariat", "Signalement"
+  emoji         String?  @default("🎫")
+  discordCategoryId String? // categorie discord ou creer les salons
+  supportRoleIds String[] @default([]) // roles pings/acces
+  welcomeEmbedTitle String? @default("Nouveau ticket")
+  welcomeEmbedDescription String? @default("Merci de decrire votre demande, un membre du staff va repondre.")
+  transcriptOnClose Boolean @default(true)
+
+  panels  TicketPanelOption[]
+  tickets Ticket[]
+
+  createdAt DateTime @default(now())
+}
+
+model TicketPanel {
+  id          String   @id @default(cuid())
+  guildId     String
+  guild       Guild    @relation(fields: [guildId], references: [id], onDelete: Cascade)
+  channelId   String
+  messageId   String?
+  title       String   @default("Support")
+  description String   @default("Cliquez sur le menu ci-dessous pour ouvrir un ticket.")
+  color       String   @default("#9B6FBF")
+
+  options TicketPanelOption[]
+
+  createdAt DateTime @default(now())
+}
+
+model TicketPanelOption {
+  id          String         @id @default(cuid())
+  panelId     String
+  panel       TicketPanel    @relation(fields: [panelId], references: [id], onDelete: Cascade)
+  categoryId  String
+  category    TicketCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  label       String
+  emoji       String?        @default("🎫")
+}
+
+model Ticket {
+  id          String   @id @default(cuid())
+  guildId     String
+  guild       Guild    @relation(fields: [guildId], references: [id], onDelete: Cascade)
+  categoryId  String
+  category    TicketCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  channelId   String
+  openerId    String
+  status      String   @default("open") // open | closed
+  closedById  String?
+  transcriptUrl String?
+  createdAt   DateTime @default(now())
+  closedAt    DateTime?
+
+  @@index([guildId, status])
+}
+
+// ----------------------------------------------------------------
+// GIVEAWAYS
+// ----------------------------------------------------------------
+model Giveaway {
+  id         String   @id @default(cuid())
+  guildId    String
+  guild      Guild    @relation(fields: [guildId], references: [id], onDelete: Cascade)
+  channelId  String
+  messageId  String?
+  prize      String
+  winnersCount Int    @default(1)
+  hostId     String
+  endsAt     DateTime
+  ended      Boolean  @default(false)
+  participantIds String[] @default([])
+
+  createdAt DateTime @default(now())
+}
+
+// ----------------------------------------------------------------
+// ROLES REACTION
+// ----------------------------------------------------------------
+model ReactionRole {
+  id        String @id @default(cuid())
+  guildId   String
+  guild     Guild  @relation(fields: [guildId], references: [id], onDelete: Cascade)
+  channelId String
+  messageId String
+  emoji     String
+  roleId    String
+
+  @@unique([messageId, emoji])
+}
+
+// ----------------------------------------------------------------
+// EMBEDS PERSONNALISES (constructeur complet depuis le dashboard)
+// ----------------------------------------------------------------
+model CustomEmbed {
+  id          String  @id @default(cuid())
+  guildId     String
+  guild       Guild   @relation(fields: [guildId], references: [id], onDelete: Cascade)
+  name        String
+  title       String?
+  titleUrl    String? // lien sur le titre
+  description String?
+  color       String? @default("#9B6FBF")
+
+  authorName    String?
+  authorIconUrl String?
+  authorUrl     String?
+
+  imageUrl     String?
+  thumbnailUrl String?
+
+  footerText    String?
+  footerIconUrl String?
+  useTimestamp  Boolean @default(false)
+
+  content String? // texte hors-embed envoye avec le message (optionnel)
+
+  fields EmbedField[]
+
+  lastSentChannelId String? // dernier salon ou l'embed a ete publie depuis le panel
+  lastSentMessageId String? // permet l'edition en place depuis le panel
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([guildId, name])
+}
+
+model EmbedField {
+  id      String      @id @default(cuid())
+  embedId String
+  embed   CustomEmbed @relation(fields: [embedId], references: [id], onDelete: Cascade)
+  name    String
+  value   String
+  inline  Boolean     @default(false)
+  order   Int         @default(0)
+
+  @@index([embedId])
+}
+
+// ----------------------------------------------------------------
+// SONDAGES INTERACTIFS (graphique en temps reel, vote par boutons)
+// ----------------------------------------------------------------
+model Poll {
+  id        String   @id @default(cuid())
+  guildId   String
+  guild     Guild    @relation(fields: [guildId], references: [id], onDelete: Cascade)
+  channelId String
+  messageId String?
+  question  String
+  multiple  Boolean  @default(false) // autorise a voter pour plusieurs options a la fois
+  endsAt    DateTime?
+  ended     Boolean  @default(false)
+  hostId    String
+
+  options PollOption[]
+
+  createdAt DateTime @default(now())
+}
+
+model PollOption {
+  id     String @id @default(cuid())
+  pollId String
+  poll   Poll   @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  label  String
+  emoji  String?
+  order  Int    @default(0)
+
+  votes PollVote[]
+}
+
+model PollVote {
+  id       String     @id @default(cuid())
+  optionId String
+  option   PollOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  userId   String
+
+  createdAt DateTime @default(now())
+
+  @@unique([optionId, userId])
+  @@index([optionId])
+}
+
+// ----------------------------------------------------------------
+// RECRUTEMENT (formulaires de candidature geres depuis Discord)
+// ----------------------------------------------------------------
+model ApplicationForm {
+  id               String   @id @default(cuid())
+  guildId          String
+  guild            Guild    @relation(fields: [guildId], references: [id], onDelete: Cascade)
+  name             String
+  questions        String[] // jusqu'a 5 questions (limite d'un modal Discord)
+  resultsChannelId String?
+  acceptRoleId     String?  // role donne automatiquement si la candidature est acceptee
+  open             Boolean  @default(true)
+
+  applications Application[]
+
+  createdAt DateTime @default(now())
+
+  @@unique([guildId, name])
+}
+
+model Application {
+  id        String          @id @default(cuid())
+  formId    String
+  form      ApplicationForm @relation(fields: [formId], references: [id], onDelete: Cascade)
+  guildId   String
+  userId    String
+  answers   Json // [{ question, answer }]
+  status    String          @default("pending") // pending | accepted | denied
+  reviewedBy String?
+
+  createdAt DateTime @default(now())
+
+  @@index([guildId, status])
+}

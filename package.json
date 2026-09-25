@@ -1,0 +1,32 @@
+{
+  "name": "ultra-bot",
+  "version": "1.0.0",
+  "description": "Bot Discord ultra complet (economie, xp, moderation, tickets, musique, mini-jeux) configurable via panel web.",
+  "main": "src/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "deploy-commands": "node src/deploy-commands.js",
+    "prisma:generate": "prisma generate",
+    "prisma:push": "prisma db push",
+    "prisma:studio": "prisma studio"
+  },
+  "dependencies": {
+    "@discord-player/extractor": "^4.5.1",
+    "@discordjs/voice": "^0.17.0",
+    "@prisma/client": "^5.20.0",
+    "discord-player": "^6.7.1",
+    "discord.js": "^14.16.3",
+    "dotenv": "^16.4.5",
+    "ffmpeg-static": "^5.2.0",
+    "libsodium-wrappers": "^0.7.15"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.7",
+    "prisma": "^5.20.0"
+  },
+  "engines": {
+    "node": ">=18.17.0"
+  }
+}
