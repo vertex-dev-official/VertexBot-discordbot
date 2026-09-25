@@ -21,7 +21,6 @@ module.exports = {
         .addIntegerOption((o) => o.setName("prix").setDescription("Prix").setRequired(true).setMinValue(1))
         .addStringOption((o) => o.setName("description").setDescription("Description").setRequired(false))
         .addRoleOption((o) => o.setName("role").setDescription("Role donne a l'achat").setRequired(false))
-        .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
     ),
 
   async autocomplete(interaction) {
