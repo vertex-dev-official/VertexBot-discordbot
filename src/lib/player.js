@@ -10,7 +10,7 @@ let player;
 async function initPlayer(client) {
   if (player) return player;
   player = new Player(client);
-  await player.extractors.loadMulti(DefaultExtractors);
+  await player.extractors.loadDefault();
 
   player.events.on("playerStart", (queue, track) => {
     queue.metadata?.channel?.send(`▶️ Lecture en cours : **${track.title}**`).catch(() => {});
